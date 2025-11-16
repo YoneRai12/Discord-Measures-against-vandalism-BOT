@@ -45,7 +45,6 @@ python bot.py
 - `/banuser_list`: 危険ユーザ一覧を表示
 - `/banuser_remove user:<User>`: 危険ユーザを削除
 - `/antiraid_test`: 動作確認用レスポンス
-- `/alert_panel channel:<TextChannel> user:<User> reason:<str>`: 任意チャンネルに危険通知を送り、警告ロール付与/BAN/危険リスト登録のボタンを同梱
 
 ## データ保存仕様
 - `banned_words.json`: 危険ワード一覧（文字列の配列）

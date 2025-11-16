@@ -6,7 +6,6 @@ from typing import List, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import View, button
 
 from .config import WARNING_ROLE_NAME
 from .models import BannedUser
@@ -47,7 +46,6 @@ class AntiRaidBot(commands.Bot):
         self.tree.add_command(self.banuser_add)
         self.tree.add_command(self.banuser_list)
         self.tree.add_command(self.banuser_remove)
-        self.tree.add_command(self.alert_panel)
         self.tree.add_command(self.antiraid_test)
         self.tree.on_error = self.on_app_command_error
 
@@ -265,47 +263,6 @@ class AntiRaidBot(commands.Bot):
     async def antiraid_test(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message("AntiRaid bot is running", ephemeral=True)
 
-    @app_commands.command(
-        name="alert_panel", description="任意チャンネルに危険通知と操作ボタンを送信"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def alert_panel(
-        self,
-        interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        user: discord.User,
-        reason: str,
-    ) -> None:
-        guild = interaction.guild
-        if not guild:
-            await interaction.response.send_message(
-                "ギルド内でのみ使用できます。", ephemeral=True
-            )
-            return
-
-        embed = discord.Embed(title="危険通知", color=discord.Color.orange())
-        embed.add_field(name="ユーザ", value=f"{user.mention} ({user.id})", inline=False)
-        embed.add_field(name="理由", value=reason, inline=False)
-        embed.set_footer(text="ボタンから迅速に対応できます")
-
-        view = ManageUserView(bot=self, target_user_id=user.id, reason=reason)
-        try:
-            await channel.send(content="危険ユーザ通知", embed=embed, view=view)
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "指定チャンネルへ送信できません (権限不足)", ephemeral=True
-            )
-            return
-        except discord.HTTPException as exc:
-            await interaction.response.send_message(
-                f"送信中にエラーが発生しました: {exc}", ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            f"{channel.mention} に危険通知を送信しました。", ephemeral=True
-        )
-
     # -------------------- エラーハンドリング --------------------
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
@@ -317,104 +274,3 @@ class AntiRaidBot(commands.Bot):
                 "コマンド実行中にエラーが発生しました。", ephemeral=True
             )
             print(f"スラッシュコマンドエラー: {error}")
-
-
-class ManageUserView(View):
-    """危険通知から即応できる操作ボタン付きビュー"""
-
-    def __init__(self, bot: AntiRaidBot, target_user_id: int, reason: str) -> None:
-        super().__init__(timeout=600)
-        self.bot = bot
-        self.target_user_id = target_user_id
-        self.reason = reason
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "管理者のみ操作できます。", ephemeral=True
-            )
-            return False
-        return True
-
-    async def _fetch_member(self, guild: discord.Guild) -> Optional[discord.Member]:
-        member = guild.get_member(self.target_user_id)
-        if member:
-            return member
-        try:
-            return await guild.fetch_member(self.target_user_id)
-        except discord.NotFound:
-            return None
-        except discord.HTTPException:
-            return None
-
-    @button(label="警告ロール付与", style=discord.ButtonStyle.secondary)
-    async def warn_button(
-        self, interaction: discord.Interaction, _: discord.ui.Button["ManageUserView"]
-    ) -> None:
-        guild = interaction.guild
-        if not guild:
-            await interaction.response.send_message("ギルドでのみ操作できます。", ephemeral=True)
-            return
-
-        member = await self._fetch_member(guild)
-        if not member:
-            await interaction.response.send_message("メンバーが見つかりません。", ephemeral=True)
-            return
-
-        role = get_role(guild, WARNING_ROLE_NAME)
-        if not role:
-            await interaction.response.send_message(
-                "警告ロールが見つかりません。", ephemeral=True
-            )
-            return
-
-        await try_add_role(member, role)
-        await interaction.response.send_message("警告ロールを付与しました。", ephemeral=True)
-
-    @button(label="BAN する", style=discord.ButtonStyle.danger)
-    async def ban_button(
-        self, interaction: discord.Interaction, _: discord.ui.Button["ManageUserView"]
-    ) -> None:
-        guild = interaction.guild
-        if not guild:
-            await interaction.response.send_message("ギルドでのみ操作できます。", ephemeral=True)
-            return
-
-        member = await self._fetch_member(guild)
-        if not member:
-            await interaction.response.send_message(
-                "対象メンバーを取得できませんでした。", ephemeral=True
-            )
-            return
-
-        try:
-            await member.ban(reason=f"Alert panel action: {self.reason}")
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "BAN に失敗しました (権限不足)", ephemeral=True
-            )
-            return
-        except discord.HTTPException as exc:
-            await interaction.response.send_message(
-                f"BAN 実行中にエラーが発生しました: {exc}", ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message("BAN を実行しました。", ephemeral=True)
-
-    @button(label="危険リストへ追加", style=discord.ButtonStyle.primary)
-    async def add_banlist_button(
-        self, interaction: discord.Interaction, _: discord.ui.Button["ManageUserView"]
-    ) -> None:
-        user_id = str(self.target_user_id)
-        if user_id in self.bot.storage.banned_users:
-            await interaction.response.send_message("既に登録済みです。", ephemeral=True)
-            return
-        info = BannedUser(
-            user_id=user_id,
-            reason=self.reason,
-            added_by=str(interaction.user.id),
-            added_at=now_iso(),
-        )
-        self.bot.storage.add_banned_user(info)
-        await interaction.response.send_message("危険ユーザリストに追加しました。", ephemeral=True)
